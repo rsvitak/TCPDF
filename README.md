@@ -17,6 +17,7 @@ $pdf->setSignatureAppearance(20,10,50,15);
 $output=$pdf->Output($filename,'S');
 ````
 Result displayed in Adobe Acrobat:
+
 ![obrazek](https://github.com/user-attachments/assets/b020c5a7-7240-4144-808f-5ca24527f34f)
 
 
