@@ -1,7 +1,7 @@
 # Add Document Time Stamp (DTS) to PDF document 
 
 * **category**    diff
-* **author**      Radek Svitak <radek@zetopry.cz>
+* **author**      Radek Svitak <radek@zetory.cz>
 * **source**      https://github.com/hidasw/TCPDF
 
 ## Description
