@@ -1,13 +1,13 @@
 <?php
 //============================================================+
 // File name   : tcpdf.php
-// Version     : 6.8.2
+// Version     : 6.7.5
 // Begin       : 2002-08-03
-// Last Update : 2024-12-23
+// Last Update : 2024-03-18
 // Author      : Nicola Asuni - Tecnick.com LTD - www.tecnick.com - info@tecnick.com
 // License     : GNU-LGPL v3 (http://www.gnu.org/copyleft/lesser.html)
 // -------------------------------------------------------------------
-// Copyright (C) 2002-2025 Nicola Asuni - Tecnick.com LTD
+// Copyright (C) 2002-2024 Nicola Asuni - Tecnick.com LTD
 //
 // This file is part of TCPDF software library.
 //
@@ -104,7 +104,7 @@
  * Tools to encode your unicode fonts are on fonts/utils directory.</p>
  * @package com.tecnick.tcpdf
  * @author Nicola Asuni
- * @version 6.8.2
+ * @version 6.6.5
  */
 
 // TCPDF configuration
@@ -128,7 +128,7 @@ require_once(dirname(__FILE__).'/include/tcpdf_static.php');
  * TCPDF project (http://www.tcpdf.org) has been originally derived in 2002 from the Public Domain FPDF class by Olivier Plathey (http://www.fpdf.org), but now is almost entirely rewritten.<br>
  * @package com.tecnick.tcpdf
  * @brief PHP class for generating PDF documents without requiring external extensions.
- * @version 6.8.2
+ * @version 6.7.5
  * @author Nicola Asuni - info@tecnick.com
  * @IgnoreAnnotation("protected")
  * @IgnoreAnnotation("public")
@@ -1277,13 +1277,25 @@ class TCPDF {
 	 * @since 4.6.005 (2009-04-24)
 	 */
 	protected $signature_data = array();
+	/**
+	 * Digital signature data.
+	 * @protected
+	 * @since 6.6.2 (2024-04-21)
+	 */
+	protected $signature_data_ltv = array();
+	/**
+	 * Digital signature data.
+	 * @protected
+	 * @since 6.6.2 (2024-04-21)
+	 */
+	protected $signature_data_tsa = array();
 
 	/**
 	 * Digital signature max length.
 	 * @protected
 	 * @since 4.6.005 (2009-04-24)
 	 */
-	protected $signature_max_length = 11742;
+	protected $signature_max_length = 36864;
 
 	/**
 	 * Data for digital signature appearance.
@@ -1298,20 +1310,6 @@ class TCPDF {
 	 * @since 5.9.101 (2011-07-06)
 	 */
 	protected $empty_signature_appearance = array();
-
-	/**
-	 * Boolean flag to enable document timestamping with TSA.
-	 * @protected
-	 * @since 6.0.085 (2014-06-19)
-	 */
-	protected $tsa_timestamp = false;
-
-	/**
-	 * Timestamping data.
-	 * @protected
-	 * @since 6.0.085 (2014-06-19)
-	 */
-	protected $tsa_data = array();
 
 	/**
 	 * Regular expression used to find blank characters (required for word-wrapping).
@@ -1991,8 +1989,6 @@ class TCPDF {
 		$this->setTextShadow();
 		// signature
 		$this->sign = false;
-		$this->tsa_timestamp = false;
-		$this->tsa_data = array();
 		$this->signature_appearance = array('page' => 1, 'rect' => '0 0 0 0', 'name' => 'Signature');
 		$this->empty_signature_appearance = array();
 		// user's rights
@@ -3007,7 +3003,6 @@ class TCPDF {
 	public function Error($msg) {
 		// unset all class variables
 		$this->_destroy(true);
-		$msg = htmlspecialchars($msg, ENT_QUOTES, 'UTF-8');
 		if (defined('K_TCPDF_THROW_EXCEPTION_ERROR') AND !K_TCPDF_THROW_EXCEPTION_ERROR) {
 			die('<strong>TCPDF ERROR: </strong>'.$msg);
 		} else {
@@ -7662,7 +7657,7 @@ class TCPDF {
 		}
 		$dest = strtoupper($dest);
 
-		if ($this->sign) {
+		if ($this->sign || !empty($this->signature_data_tsa)) {
 			// *** apply digital signature to the document ***
 			// get the document content
 			$pdfdoc = $this->getBuffer();
@@ -7681,37 +7676,21 @@ class TCPDF {
 			$byterange = sprintf('/ByteRange[0 %u %u %u]', $byte_range[1], $byte_range[2], $byte_range[3]);
 			$byterange .= str_repeat(' ', ($byterange_string_len - strlen($byterange)));
 			$pdfdoc = str_replace(TCPDF_STATIC::$byterange_string, $byterange, $pdfdoc);
-			// write the document to a temporary folder
-			$tempdoc = TCPDF_STATIC::getObjFilename('doc', $this->file_id);
-			$f = TCPDF_STATIC::fopenLocal($tempdoc, 'wb');
-			if (!$f) {
-				$this->Error('Unable to create temporary file: '.$tempdoc);
-			}
-			$pdfdoc_length = strlen($pdfdoc);
-			fwrite($f, $pdfdoc, $pdfdoc_length);
-			fclose($f);
-			// get digital signature via openssl library
-			$tempsign = TCPDF_STATIC::getObjFilename('sig', $this->file_id);
-			if (empty($this->signature_data['extracerts'])) {
-				openssl_pkcs7_sign($tempdoc, $tempsign, $this->signature_data['signcert'], array($this->signature_data['privkey'], $this->signature_data['password']), array(), PKCS7_BINARY | PKCS7_DETACHED);
-			} else {
-				openssl_pkcs7_sign($tempdoc, $tempsign, $this->signature_data['signcert'], array($this->signature_data['privkey'], $this->signature_data['password']), array(), PKCS7_BINARY | PKCS7_DETACHED, $this->signature_data['extracerts']);
-			}
-			// read signature
-			$signature = file_get_contents($tempsign);
-			// extract signature
-			$signature = substr($signature, $pdfdoc_length);
-			$signature = substr($signature, (strpos($signature, "%%EOF\n\n------") + 13));
-			$tmparr = explode("\n\n", $signature);
-			$signature = $tmparr[1];
-			// decode signature
-			$signature = base64_decode(trim($signature));
-			// add TSA timestamp to signature
-			$signature = $this->applyTSA($signature);
-			// convert signature to hex
-			$signature = current(unpack('H*', $signature));
+
+      require_once(dirname(__FILE__).'/include/tcpdf_cmssignature.php');
+      $tcpdf_cms = new tcpdf_cmssignature;
+      $tcpdf_cms->signature_data = $this->signature_data;
+      $tcpdf_cms->signature_data_ltv = $this->signature_data_ltv;
+      $tcpdf_cms->signature_data_tsa = $this->signature_data_tsa;
+      $tcpdf_cms->log .= "info:Start PKCS7 Signing...\n";
+      if(!$signature = $tcpdf_cms->pkcs7_sign($pdfdoc)) {
+        $tcpdf_cms->log .= "error:PKCS7 Signing end FAILED!\n";
+      }
+      $tcpdf_cms->log .= "info:PDF Sign Finish size \"".strlen($signature)."\" Kb\n";
+
 			$signature = str_pad($signature, $this->signature_max_length, '0');
 			// Add signature to the document
+			
 			$this->buffer = substr($pdfdoc, 0, $byte_range[1]).'<'.$signature.'>'.substr($pdfdoc, $byte_range[1]);
 			$this->bufferlen = strlen($this->buffer);
 		}
@@ -7880,10 +7859,10 @@ class TCPDF {
 			'imagekeys',
 			'sign',
 			'signature_data',
+			'signature_data_ltv',
+			'signature_data_tsa',
 			'signature_max_length',
-			'byterange_string',
-			'tsa_timestamp',
-			'tsa_data'
+			'byterange_string'
 		);
 		foreach (array_keys(get_object_vars($this)) as $val) {
 			if ($destroyall OR !in_array($val, $preserve)) {
@@ -8165,7 +8144,7 @@ class TCPDF {
 	 * @since 5.0.010 (2010-05-17)
 	 */
 	protected function _getannotsrefs($n) {
-		if (!(isset($this->PageAnnots[$n]) OR count($this->empty_signature_appearance)>0 OR ($this->sign AND isset($this->signature_data['cert_type'])))) {
+		if (!(isset($this->PageAnnots[$n]) OR ($this->sign AND isset($this->signature_data['cert_type'])))) {
 			return '';
 		}
 		$out = ' /Annots [';
@@ -8311,15 +8290,15 @@ class TCPDF {
 										break;
 									}
 									case 'locked': {
-										$fval += 1 << 7;
-										break;
-									}
-									case 'togglenoview': {
 										$fval += 1 << 8;
 										break;
 									}
-									case 'lockedcontents': {
+									case 'togglenoview': {
 										$fval += 1 << 9;
+										break;
+									}
+									case 'lockedcontents': {
+										$fval += 1 << 10;
 										break;
 									}
 									default: {
@@ -8533,7 +8512,7 @@ class TCPDF {
 						}
 						case 'freetext': {
 							if (isset($pl['opt']['da']) AND !empty($pl['opt']['da'])) {
-								$annots .= ' /DA '.$this->_datastring($pl['opt']['da']);
+								$annots .= ' /DA ('.$pl['opt']['da'].')';
 							}
 							if (isset($pl['opt']['q']) AND ($pl['opt']['q'] >= 0) AND ($pl['opt']['q'] <= 2)) {
 								$annots .= ' /Q '.intval($pl['opt']['q']);
@@ -8790,7 +8769,7 @@ class TCPDF {
 								$annots .= ' /AA << '.$pl['opt']['aa'].' >>';
 							}
 							if (isset($pl['opt']['da']) AND !empty($pl['opt']['da'])) {
-								$annots .= ' /DA '.$this->_datastring($pl['opt']['da']);
+								$annots .= ' /DA ('.$pl['opt']['da'].')';
 							}
 							if (isset($pl['opt']['q']) AND ($pl['opt']['q'] >= 0) AND ($pl['opt']['q'] <= 2)) {
 								$annots .= ' /Q '.intval($pl['opt']['q']);
@@ -9940,7 +9919,7 @@ class TCPDF {
 				$out .= ' >> >>';
 			}
 			$font = $this->getFontBuffer((($this->pdfa_mode) ? 'pdfa' : '') .'helvetica');
-			$out .= ' /DA ' . $this->_datastring('/F'.$font['i'].' 0 Tf 0 g');
+			$out .= ' /DA (/F'.$font['i'].' 0 Tf 0 g)';
 			$out .= ' /Q '.(($this->rtl)?'2':'0');
 			//$out .= ' /XFA ';
 			$out .= ' >>';
@@ -11047,7 +11026,7 @@ class TCPDF {
 				$this->encryptdata['V'] = 4;
 				$this->encryptdata['Length'] = 128;
 				$this->encryptdata['CF']['CFM'] = 'AESV2';
-				$this->encryptdata['CF']['Length'] = 16;
+				$this->encryptdata['CF']['Length'] = 128;
 				if ($this->encryptdata['pubkey']) {
 					$this->encryptdata['SubFilter'] = 'adbe.pkcs7.s5';
 					$this->encryptdata['Recipients'] = array();
@@ -11058,7 +11037,7 @@ class TCPDF {
 				$this->encryptdata['V'] = 5;
 				$this->encryptdata['Length'] = 256;
 				$this->encryptdata['CF']['CFM'] = 'AESV3';
-				$this->encryptdata['CF']['Length'] = 32;
+				$this->encryptdata['CF']['Length'] = 256;
 				if ($this->encryptdata['pubkey']) {
 					$this->encryptdata['SubFilter'] = 'adbe.pkcs7.s5';
 					$this->encryptdata['Recipients'] = array();
@@ -13434,6 +13413,14 @@ class TCPDF {
 		}
 		$sigobjid = ($this->sig_obj_id + 1);
 		$out = $this->_getobj($sigobjid)."\n";
+		if ($this->signature_data['signcert']==='DTS-ONLY') {
+			$out .= '<<'."\n".'/Filter /Adobe.PPKLite'."\n";
+			$out .= '/SubFilter /ETSI.RFC3161'."\n";
+			$out .= TCPDF_STATIC::$byterange_string."\n";
+			$out .= '/Contents<'.str_repeat('0', $this->signature_max_length).'>'."\n";
+			$out .= '/Type /DocTimeStamp'."\n";
+			$out .= '/V 0'."\n";
+		} else {
 		$out .= '<< /Type /Sig';
 		$out .= ' /Filter /Adobe.PPKLite';
 		$out .= ' /SubFilter /adbe.pkcs7.detached';
@@ -13494,6 +13481,7 @@ class TCPDF {
 			$out .= ' /ContactInfo '.$this->_textstring($this->signature_data['info']['ContactInfo'], $sigobjid);
 		}
 		$out .= ' /M '.$this->_datestring($sigobjid, $this->doc_modification_timestamp);
+      }
 		$out .= ' >>';
 		$out .= "\n".'endobj';
 		$this->_out($out);
@@ -13553,7 +13541,7 @@ class TCPDF {
 	 * @author Nicola Asuni
 	 * @since 4.6.005 (2009-04-24)
 	 */
-	public function setSignature($signing_cert='', $private_key='', $private_key_password='', $extracerts='', $cert_type=2, $info=array(), $approval='') {
+	public function setSignature($signing_cert='', $private_key='', $private_key_password='', $extracerts='', $cert_type=2, $info=array(), $hashAlgorithm='sha256', $approval='') {
 		// to create self-signed signature: openssl req -x509 -nodes -days 365000 -newkey rsa:1024 -keyout tcpdf.crt -out tcpdf.crt
 		// to export crt to p12: openssl pkcs12 -export -in tcpdf.crt -out tcpdf.p12
 		// to convert pfx certificate to pem: openssl
@@ -13575,6 +13563,7 @@ class TCPDF {
 		$this->signature_data['extracerts'] = $extracerts;
 		$this->signature_data['cert_type'] = $cert_type;
 		$this->signature_data['info'] = $info;
+		$this->signature_data['hashAlgorithm'] = strtolower($hashAlgorithm);
 		$this->signature_data['approval'] = $approval;
 	}
 
@@ -13655,41 +13644,36 @@ class TCPDF {
 	 * @public
 	 * @author Richard Stockinger
 	 * @since 6.0.090 (2014-06-16)
+	 * @author M Hida
+	 * @since 6.6.2 (2024-04-21)
 	 */
-	public function setTimeStamp($tsa_host='', $tsa_username='', $tsa_password='', $tsa_cert='') {
-		$this->tsa_data = array();
-		if (!function_exists('curl_init')) {
-			$this->Error('Please enable cURL PHP extension!');
-		}
-		if (strlen($tsa_host) == 0) {
-			$this->Error('Please specify the host of Time Stamping Authority (TSA)!');
-		}
-		$this->tsa_data['tsa_host'] = $tsa_host;
-		if (is_file($tsa_username)) {
-			$this->tsa_data['tsa_auth'] = $tsa_username;
-		} else {
-			$this->tsa_data['tsa_username'] = $tsa_username;
-		}
-		$this->tsa_data['tsa_password'] = $tsa_password;
-		$this->tsa_data['tsa_cert'] = $tsa_cert;
-		$this->tsa_timestamp = true;
+	// other options suggested to be implement: reqPolicy, nonce, certReq, extensions 
+	// and option to abort signing if timestamping failed and LTV enable (embed crl and or ocsp revocation info)
+	public function setTimeStamp($tsa_host, $tsa_username='', $tsa_password='', $tsa_cert='') {
+    $this->signature_data_tsa['host'] = $tsa_host;
+		$this->signature_data_tsa['username'] = $tsa_username;
+		$this->signature_data_tsa['password'] = $tsa_password;
+		$this->signature_data_tsa['cert'] = $tsa_cert;
 	}
 
 	/**
-	 * NOT YET IMPLEMENTED
-	 * Request TSA for a timestamp
-	 * @param string $signature Digital signature as binary string
-	 * @return string Timestamped digital signature
-	 * @protected
-	 * @author Richard Stockinger
-	 * @since 6.0.090 (2014-06-16)
+	 * Set user defined LTV parameters.
+	 * If not set, it will lookup in cert attributes.
+	 * Enable LTV (Long Term Validation) (requires the OpenSSL Library).
+	 * Use with digital signature only!
+	 * @param string $ocspURI Custom OCSP URI address, usefull cert not specify AIA OCSP address in cert attribute. Set null to skip ocsp embedding and set next arguments.
+	 *                        set false/empty to lookup in cert attribute.
+	 * @param string $crlURIorFILE Custom CDP address/file location, usefull cert not specify CDP address in cert attribute. Set null to skip CRL embedding and set next arguments.
+	 *                        set false/empty to lookup in cert attribute.
+	 * @param string $issuerURIorFILE Specifies CA Issuer URI address or file name. Its absolutely needed.
+	 * @public
+	 * @author M Hida
+	 * @since 6.6.2 (2024-04-21)
 	 */
-	protected function applyTSA($signature) {
-		if (!$this->tsa_timestamp) {
-			return $signature;
-		}
-		//@TODO: implement this feature
-		return $signature;
+	public function setLtv($ocspURI=null, $crlURIorFILE=null, $issuerURIorFILE=null) {
+		$this->signature_data_ltv['ocspURI'] = $ocspURI;
+		$this->signature_data_ltv['crlURIorFILE'] = $crlURIorFILE;
+		$this->signature_data_ltv['issuerURIorFILE'] = $issuerURIorFILE;
 	}
 
 	/**
@@ -13937,8 +13921,8 @@ class TCPDF {
 	 * @since 3.0.000 (2008-03-27)
 	 */
 	protected function addExtGState($parms) {
-		if (($this->pdfa_mode && $this->pdfa_version < 2) || ($this->state != 2)) {
-			// transparency is not allowed in PDF/A-1 mode
+		if ($this->pdfa_mode || $this->pdfa_version >= 2) {
+			// transparencies are not allowed in PDF/A mode
 			return;
 		}
 		// check if this ExtGState already exist
@@ -16441,7 +16425,7 @@ class TCPDF {
 			)
 		);
 
-		if($html === '' || $html === null) {
+		if(empty($html)) {
 			return $dom;
 		}
 		// array of CSS styles ( selector => properties).
@@ -17260,7 +17244,7 @@ class TCPDF {
 		$hlen = intval(substr($data, 0, $hpos));
 		$hash = substr($data, $hpos + 1, $hlen);
 		$encoded = substr($data, $hpos + 2 + $hlen);
-		if (!hash_equals( $this->hashTCPDFtag($encoded), $hash)) {
+		if ($hash != $this->hashTCPDFtag($encoded)) {
 			$this->Error('Invalid parameters');
 		}
 		return json_decode(urldecode($encoded), true);
@@ -19011,29 +18995,29 @@ class TCPDF {
 				$this->setLineWidth($hrHeight);
 
 				$lineStyle = array();
-				if (isset($tag['fgcolor'])) {
-					$lineStyle['color'] = $tag['fgcolor'];
-				}
+                    		if (isset($tag['fgcolor'])) {
+		                        $lineStyle['color'] = $tag['fgcolor'];
+                    		}
 
-				if (isset($tag['fgcolor'])) {
-					$lineStyle['color'] = $tag['fgcolor'];
-				}
+                    		if (isset($tag['fgcolor'])) {
+                        		$lineStyle['color'] = $tag['fgcolor'];
+                    		}
 
-				if (isset($tag['style']['cap'])) {
-					$lineStyle['cap'] = $tag['style']['cap'];
-				}
+                    		if (isset($tag['style']['cap'])) {
+                        		$lineStyle['cap'] = $tag['style']['cap'];
+                    		}
 
-				if (isset($tag['style']['join'])) {
-					$lineStyle['join'] = $tag['style']['join'];
-				}
+                    		if (isset($tag['style']['join'])) {
+                        		$lineStyle['join'] = $tag['style']['join'];
+                    		}
 
-				if (isset($tag['style']['dash'])) {
-					$lineStyle['dash'] = $tag['style']['dash'];
-				}
+                    		if (isset($tag['style']['dash'])) {
+                        		$lineStyle['dash'] = $tag['style']['dash'];
+                    		}
 
-				if (isset($tag['style']['phase'])) {
-					$lineStyle['phase'] = $tag['style']['phase'];
-				}
+                    		if (isset($tag['style']['phase'])) {
+                        		$lineStyle['phase'] = $tag['style']['phase'];
+                    		}
 
 				$lineStyle = array_filter($lineStyle);
 
@@ -19056,18 +19040,15 @@ class TCPDF {
 				if ($imgsrc[0] === '@') {
 					// data stream
 					$imgsrc = '@'.base64_decode(substr($imgsrc, 1));
-					$type = preg_match('/<svg\s+[^>]*[^>]*>.*<\/svg>/is', $imgsrc) ? 'svg' : '';
+					$type = '';
 				} else if (preg_match('@^data:image/([^;]*);base64,(.*)@', $imgsrc, $reg)) {
 					$imgsrc = '@'.base64_decode($reg[2]);
 					$type = $reg[1];
-				} elseif (strpos($imgsrc, '../') !== false) {
-					// accessing parent folders is not allowed
-					break;
 				} elseif ( $this->allowLocalFiles && substr($imgsrc, 0, 7) === 'file://') {
-					// get image type from a local file path
-					$imgsrc = substr($imgsrc, 7);
-					$type = TCPDF_IMAGES::getImageFileType($imgsrc);
-				} else {
+                    // get image type from a local file path
+                    $imgsrc = substr($imgsrc, 7);
+                    $type = TCPDF_IMAGES::getImageFileType($imgsrc);
+                } else {
 					if (($imgsrc[0] === '/') AND !empty($_SERVER['DOCUMENT_ROOT']) AND ($_SERVER['DOCUMENT_ROOT'] != '/')) {
 						// fix image path
 						$findroot = strpos($imgsrc, $_SERVER['DOCUMENT_ROOT']);
@@ -19125,7 +19106,7 @@ class TCPDF {
 				$imglink = '';
 				if (isset($this->HREF['url']) AND !TCPDF_STATIC::empty_string($this->HREF['url'])) {
 					$imglink = $this->HREF['url'];
-					if ($imglink[0] == '#' AND is_numeric($imglink[1])) {
+					if ($imglink[0] == '#') {
 						// convert url to internal link
 						$lnkdata = explode(',', $imglink);
 						if (isset($lnkdata[0])) {
@@ -23174,12 +23155,14 @@ class TCPDF {
 		$this->_out(sprintf('%F %F %F %F %F %F cm', $svgscale_x, 0, 0, $svgscale_y, ($e + $svgoffset_x), ($f + $svgoffset_y)));
 		// creates a new XML parser to be used by the other XML functions
 		$parser = xml_parser_create('UTF-8');
+		// the following function allows to use parser inside object
+		xml_set_object($parser, $this);
 		// disable case-folding for this XML parser
 		xml_parser_set_option($parser, XML_OPTION_CASE_FOLDING, 0);
 		// sets the element handler functions for the XML parser
-		xml_set_element_handler($parser, [$this, 'startSVGElementHandler'], [$this, 'endSVGElementHandler']);
+		xml_set_element_handler($parser, 'startSVGElementHandler', 'endSVGElementHandler');
 		// sets the character data handler function for the XML parser
-		xml_set_character_data_handler($parser, [$this, 'segSVGContentHandler']);
+		xml_set_character_data_handler($parser, 'segSVGContentHandler');
 		// start parsing an XML document
 		if (!xml_parse($parser, $svgdata)) {
 			$error_message = sprintf('SVG Error: %s at line %d', xml_error_string(xml_get_error_code($parser)), xml_get_current_line_number($parser));
@@ -23329,7 +23312,7 @@ class TCPDF {
 		$text_color = TCPDF_COLORS::convertHTMLColorToDec($svgstyle['text-color'], $this->spot_colors);
 		$this->setTextColorArray($text_color);
 		// clip
-		if (preg_match('/rect\(([a-z0-9\-\.]*+)[\s]*+([a-z0-9\-\.]*+)[\s]*+([a-z0-9\-\.]*+)[\s]*+([a-z0-9\-\.]*+)\)/si', $svgstyle['clip'], $regs)) {
+		if (preg_match('/rect\(([a-z0-9\-\.]*)[\s]*([a-z0-9\-\.]*)[\s]*([a-z0-9\-\.]*)[\s]*([a-z0-9\-\.]*)\)/si', $svgstyle['clip'], $regs)) {
 			$top = (isset($regs[1])?$this->getHTMLUnitToUnits($regs[1], 0, $this->svgunit, false):0);
 			$right = (isset($regs[2])?$this->getHTMLUnitToUnits($regs[2], 0, $this->svgunit, false):0);
 			$bottom = (isset($regs[3])?$this->getHTMLUnitToUnits($regs[3], 0, $this->svgunit, false):0);
@@ -23446,8 +23429,8 @@ class TCPDF {
 				$cy -= $h;
 			}
 			$this->_out(sprintf('%F 0 0 %F %F %F cm', ($w * $this->k), ($h * $this->k), ($x * $this->k), ($cy * $this->k)));
-			if ((is_array($gradient['stops']) || $gradient['stops'] instanceof Countable) && count($gradient['stops']) > 1) {
-				$this->Gradient($gradient['type'], $gradient['coords'], $gradient['stops']);
+			if (count($gradient['stops']) > 1) {
+				$this->Gradient($gradient['type'], $gradient['coords'], $gradient['stops'], array(), false);
 			}
 		} elseif ($svgstyle['fill'] != 'none') {
 			$fill_color = TCPDF_COLORS::convertHTMLColorToDec($svgstyle['fill'], $this->spot_colors);
@@ -23486,7 +23469,7 @@ class TCPDF {
 			if (preg_match('/font-family[\s]*:[\s]*([^\;\"]*)/si', $svgstyle['font'], $regs)) {
 				$font_family = $this->getFontFamilyName($regs[1]);
 			} else {
-				$font_family = $this->getFontFamilyName($svgstyle['font-family']);
+				$font_family = $svgstyle['font-family'];
 			}
 			if (preg_match('/font-size[\s]*:[\s]*([^\s\;\"]*)/si', $svgstyle['font'], $regs)) {
 				$font_size = trim($regs[1]);
@@ -23641,8 +23624,7 @@ class TCPDF {
 			$params = array();
 			if (isset($val[2])) {
 				// get curve parameters
-				preg_match_all('/-?\d*\.?\d+/', trim($val[2]), $matches);
-				$rawparams = $matches[0];
+				$rawparams = preg_split('/([\,\s]+)/si', trim($val[2]));
 				$params = array();
 				foreach ($rawparams as $ck => $cp) {
 					$params[$ck] = $this->getHTMLUnitToUnits($cp, 0, $this->svgunit, false);
@@ -24467,10 +24449,6 @@ class TCPDF {
 						$img = '@'.base64_decode(substr($img, strlen($m[0])));
 					} else {
 						// fix image path
-						if (strpos($img, '../') !== false) {
-							// accessing parent folders is not allowed
-							break;
-						}
 						if (!TCPDF_STATIC::empty_string($this->svgdir) AND (($img[0] == '.') OR (basename($img) == $img))) {
 							// replace relative path with full server path
 							$img = $this->svgdir.'/'.$img;
